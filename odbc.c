@@ -587,6 +587,24 @@ typedef int (*AtypeFunc)(term_t t, void *vp);
 #define get_odbc_version_arg_ex(i, t, n) \
 	PL_get_typed_arg_ex(i, t, (AtypeFunc)get_odbc_version, "odbc_version", n)
 
+/* As above, but applied to an option _value_ that has already been
+   extracted (e.g. by PL_scan_options()). */
+
+static int
+get_typed_ex(term_t t, AtypeFunc func, const char *ex, void *ap)
+{ if ( !(*func)(t, ap) )
+    return type_error(t, ex);
+
+  return TRUE;
+}
+
+#define get_name_ex(t, n)	  get_typed_ex(t, (AtypeFunc)PL_get_atom_chars, "atom", n)
+#define get_text_ex(t, n)	  get_typed_ex(t, (AtypeFunc)get_text, "text", n)
+#define get_atom_ex(t, n)	  get_typed_ex(t, (AtypeFunc)PL_get_atom, "atom", n)
+#define get_bool_ex(t, n)	  get_typed_ex(t, (AtypeFunc)PL_get_bool, "boolean", n)
+#define get_encoding_ex(t, n)	  get_typed_ex(t, (AtypeFunc)get_encoding, "encoding", n)
+#define get_odbc_version_ex(t, n) get_typed_ex(t, (AtypeFunc)get_odbc_version, "odbc_version", n)
+
 /* Used for passwd and driver string.  Should use Unicode/encoding
    stuff for that.
 */
@@ -1405,6 +1423,25 @@ odbc_connect(+DSN, -Connection, +Options)
 
 #define MAX_AFTER_OPTIONS 10
 
+static PL_option_t connect_options[] =
+{ PL_OPTION("user",			OPT_TERM),
+  PL_OPTION("password",			OPT_TERM),
+  PL_OPTION("alias",			OPT_TERM),
+  PL_OPTION("driver_string",		OPT_TERM),
+  PL_OPTION("mars",			OPT_TERM),
+  PL_OPTION("connection_pool_mode",	OPT_TERM),
+  PL_OPTION("odbc_version",		OPT_TERM),
+  PL_OPTION("open",			OPT_TERM),
+  PL_OPTION("silent",			OPT_TERM),
+  PL_OPTION("encoding",			OPT_TERM),
+  PL_OPTION("auto_commit",		OPT_TERM),
+  PL_OPTION("null",			OPT_TERM),
+  PL_OPTION("access_mode",		OPT_TERM),
+  PL_OPTION("cursor_type",		OPT_TERM),
+  PL_OPTION("wide_column_threshold",	OPT_TERM),
+  PL_OPTIONS_END
+};
+
 static foreign_t
 pl_odbc_connect(term_t tdsource, term_t cid, term_t options)
 {  atom_t dsn;
@@ -1421,8 +1458,11 @@ pl_odbc_connect(term_t tdsource, term_t cid, term_t options)
    RETCODE rc;				/* result code for ODBC functions */
    HDBC hdbc;
    connection *cn;
-   term_t tail = PL_copy_term_ref(options);
-   term_t head = PL_new_term_ref();
+   term_t user = 0, password = 0, alias_o = 0, driver_string_o = 0;
+   term_t mars_o = 0, pool_mode_o = 0, odbc_version_o = 0, open_o = 0;
+   term_t silent_o = 0, encoding_o = 0;
+   term_t auto_commit = 0, null_o = 0, access_mode = 0;
+   term_t cursor_type = 0, wide_column_threshold = 0;
    term_t after_open = PL_new_term_refs(MAX_AFTER_OPTIONS);
    int i, nafter = 0;
    int silent = FALSE;
@@ -1431,57 +1471,62 @@ pl_odbc_connect(term_t tdsource, term_t cid, term_t options)
    if ( !PL_get_atom(tdsource, &dsn) )
      return type_error(tdsource, "atom");
 
-   while(PL_get_list(tail, head, tail))
-   { if ( PL_is_functor(head, FUNCTOR_user1) )
-     { if ( !get_name_arg_ex(1, head, &uid) )
-	 return FALSE;
-     } else if ( PL_is_functor(head, FUNCTOR_password1) )
-     { if ( !get_text_arg_ex(1, head, &pwd) )
-	 return FALSE;
-     } else if ( PL_is_functor(head, FUNCTOR_alias1) )
-     { if ( !get_atom_arg_ex(1, head, &alias) )
-	 return FALSE;
-     } else if ( PL_is_functor(head, FUNCTOR_driver_string1) )
-     { if ( !get_text_arg_ex(1, head, &driver_string) )
-	 return FALSE;
-     } else if ( PL_is_functor(head, FUNCTOR_mars1) )
-     { if ( !get_bool_arg_ex(1, head, &mars) )
-	 return FALSE;
-     } else if ( PL_is_functor(head, FUNCTOR_connection_pool_mode1) )
-     { if ( !get_atom_arg_ex(1, head, &pool_mode) )
-	 return FALSE;
-       if ( pool_mode != ATOM_strict && pool_mode != ATOM_relaxed )
-	 return domain_error(head, "pool_mode");
-     } else if ( PL_is_functor(head, FUNCTOR_odbc_version1) )
-     { if ( !get_odbc_version_arg_ex(1, head, &odbc_version) )
-	 return FALSE;
-     } else if ( PL_is_functor(head, FUNCTOR_open1) )
-     { if ( !get_atom_arg_ex(1, head, &open) )
-	 return FALSE;
-       if ( !(open == ATOM_once ||
-	      open == ATOM_multiple) )
-	 return domain_error(head, "open_mode");
-     } else if ( PL_is_functor(head, FUNCTOR_silent1) )
-     { if ( !get_bool_arg_ex(1, head, &silent) )
-	 return FALSE;
-     } else if ( PL_is_functor(head, FUNCTOR_encoding1) )
-     { if ( !get_encoding_arg_ex(1, head, &encoding) )
-	 return FALSE;
-     } else if ( PL_is_functor(head, FUNCTOR_auto_commit1) ||
-		 PL_is_functor(head, FUNCTOR_null1) ||
-		 PL_is_functor(head, FUNCTOR_access_mode1) ||
-		 PL_is_functor(head, FUNCTOR_cursor_type1) ||
-		 PL_is_functor(head, FUNCTOR_wide_column_threshold1) )
-     { if ( nafter < MAX_AFTER_OPTIONS )
-       { if ( !PL_put_term(after_open+nafter++, head) )
-	   return FALSE;
-       } else
-	 return PL_warning("Too many options"); /* shouldn't happen */
-     } else
-       return domain_error(head, "odbc_option");
+   if ( !PL_scan_options(options, OPT_UNKNOWN_ERROR, "odbc_option",
+			 connect_options,
+			 &user, &password, &alias_o, &driver_string_o,
+			 &mars_o, &pool_mode_o, &odbc_version_o, &open_o,
+			 &silent_o, &encoding_o, &auto_commit, &null_o,
+			 &access_mode, &cursor_type, &wide_column_threshold) )
+     return FALSE;
+
+   if ( user            && !get_name_ex(user, &uid) )
+     return FALSE;
+   if ( password        && !get_text_ex(password, &pwd) )
+     return FALSE;
+   if ( alias_o         && !get_atom_ex(alias_o, &alias) )
+     return FALSE;
+   if ( driver_string_o && !get_text_ex(driver_string_o, &driver_string) )
+     return FALSE;
+   if ( mars_o          && !get_bool_ex(mars_o, &mars) )
+     return FALSE;
+   if ( pool_mode_o )
+   { if ( !get_atom_ex(pool_mode_o, &pool_mode) )
+       return FALSE;
+     if ( pool_mode != ATOM_strict && pool_mode != ATOM_relaxed )
+       return domain_error(pool_mode_o, "pool_mode");
    }
-   if ( !PL_get_nil(tail) )
-     return type_error(tail, "list");
+   if ( odbc_version_o  && !get_odbc_version_ex(odbc_version_o, &odbc_version) )
+     return FALSE;
+   if ( open_o )
+   { if ( !get_atom_ex(open_o, &open) )
+       return FALSE;
+     if ( !(open == ATOM_once || open == ATOM_multiple) )
+       return domain_error(open_o, "open_mode");
+   }
+   if ( silent_o        && !get_bool_ex(silent_o, &silent) )
+     return FALSE;
+   if ( encoding_o      && !get_encoding_ex(encoding_o, &encoding) )
+     return FALSE;
+
+   if ( auto_commit &&
+	!PL_cons_functor(after_open+nafter++, FUNCTOR_auto_commit1,
+			 auto_commit) )
+     return FALSE;
+   if ( null_o &&
+	!PL_cons_functor(after_open+nafter++, FUNCTOR_null1, null_o) )
+     return FALSE;
+   if ( access_mode &&
+	!PL_cons_functor(after_open+nafter++, FUNCTOR_access_mode1,
+			 access_mode) )
+     return FALSE;
+   if ( cursor_type &&
+	!PL_cons_functor(after_open+nafter++, FUNCTOR_cursor_type1,
+			 cursor_type) )
+     return FALSE;
+   if ( wide_column_threshold &&
+	!PL_cons_functor(after_open+nafter++, FUNCTOR_wide_column_threshold1,
+			 wide_column_threshold) )
+     return FALSE;
 
    if ( !open )
      open = alias ? ATOM_once : ATOM_multiple;
