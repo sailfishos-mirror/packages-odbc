@@ -354,7 +354,10 @@ insert_child(Child, Mother, Father, Affected) :-
 		   affected(Affected)).
 \end{code}
 
-\arg{Options} defines the following options.
+\arg{Options} defines the following options.  Note that, because
+\functor{findall}{2} is a two-argument option, these options are
+processed by a dedicated routine rather than the common option handling.
+As a result \arg{Options} must be a list and cannot be given as a dict.
 
 \begin{description}
     \termitem{types}{ListOfTypes}
