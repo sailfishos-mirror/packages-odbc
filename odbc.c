@@ -2612,7 +2612,12 @@ set_column_types(context *ctxt, term_t option)
 
 static int
 set_statement_options(context *ctxt, term_t options)
-{ if ( !PL_get_nil(options) )
+{ /* Options are scanned by hand rather than through PL_scan_options()
+     because findall(Template, Row) is an arity-2 option that the generic
+     option scanner cannot express.  As a consequence these options are
+     not available as a dict.
+  */
+  if ( !PL_get_nil(options) )
   { term_t tail = PL_copy_term_ref(options);
     term_t head = PL_new_term_ref();
 
